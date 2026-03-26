@@ -3,8 +3,11 @@ import * as vscode from "vscode";
 const SUPPORTED_LANGUAGES = new Set(["scheme", "racket", "lisp"]);
 const OPEN_PAREN = "(";
 const CLOSE_PAREN = ")";
-const VECTOR_PREFIX = "#";
+const VECTOR_PREFIX = "#(";
+const BYTEVECTOR_PREFIX = "#vu8(";
 const ESCAPE_PREFIX = "\\";
+const CONFIG_SECTION = "lispBracketMatcher";
+const DEFAULT_DEBOUNCE_MS = 120;
 
 type BracketKind = "open" | "close";
 type BracketTokenType = "list" | "vector";
@@ -19,6 +22,8 @@ interface BracketToken {
 let bracketDecoration: vscode.TextEditorDecorationType | undefined;
 let diagnosticCollection: vscode.DiagnosticCollection | undefined;
 let lastDecoratedEditor: vscode.TextEditor | undefined;
+let pendingUpdate: ReturnType<typeof setTimeout> | undefined;
+let pendingEditor: vscode.TextEditor | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   bracketDecoration = vscode.window.createTextEditorDecorationType({
@@ -34,19 +39,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      updateEditorState(editor);
+      scheduleEditorUpdate(editor, 0);
     }),
     vscode.window.onDidChangeTextEditorSelection((event) => {
-      updateEditorState(event.textEditor);
+      scheduleEditorUpdate(event.textEditor, 0);
     }),
     vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-      updateEditorState(event.textEditor);
+      scheduleEditorUpdate(event.textEditor, 0);
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
       const editor = vscode.window.activeTextEditor;
 
       if (editor && event.document === editor.document) {
-        updateEditorState(editor);
+        scheduleEditorUpdate(editor);
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(CONFIG_SECTION)) {
+        scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
       }
     }),
     vscode.workspace.onDidCloseTextDocument((document) => {
@@ -54,10 +64,15 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  updateEditorState(vscode.window.activeTextEditor);
+  scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
 }
 
 export function deactivate(): void {
+  if (pendingUpdate) {
+    clearTimeout(pendingUpdate);
+    pendingUpdate = undefined;
+  }
+
   if (bracketDecoration) {
     bracketDecoration.dispose();
     bracketDecoration = undefined;
@@ -67,6 +82,19 @@ export function deactivate(): void {
     diagnosticCollection.dispose();
     diagnosticCollection = undefined;
   }
+}
+
+function scheduleEditorUpdate(editor: vscode.TextEditor | undefined, delay = getDebounceDelay()): void {
+  pendingEditor = editor;
+
+  if (pendingUpdate) {
+    clearTimeout(pendingUpdate);
+  }
+
+  pendingUpdate = setTimeout(() => {
+    pendingUpdate = undefined;
+    updateEditorState(pendingEditor);
+  }, delay);
 }
 
 function updateEditorState(editor: vscode.TextEditor | undefined): void {
@@ -86,7 +114,11 @@ function updateEditorState(editor: vscode.TextEditor | undefined): void {
   }
 
   const visibleContext = analyzeVisibleRanges(editor);
-  diagnosticCollection.set(editor.document.uri, visibleContext.diagnostics);
+  if (isDiagnosticsEnabled()) {
+    diagnosticCollection.set(editor.document.uri, visibleContext.diagnostics);
+  } else {
+    diagnosticCollection.delete(editor.document.uri);
+  }
 
   const selection = editor.selection;
   if (!selection.isEmpty) {
@@ -117,12 +149,13 @@ function analyzeVisibleRanges(editor: vscode.TextEditor): {
   diagnostics: vscode.Diagnostic[];
 } {
   const tokens: BracketToken[] = [];
+  const diagnostics: vscode.Diagnostic[] = [];
 
   for (const range of normalizeRanges(editor.visibleRanges)) {
-    tokens.push(...tokenizeRange(editor.document, range));
+    const rangeTokens = tokenizeRange(editor.document, range);
+    tokens.push(...rangeTokens);
+    diagnostics.push(...buildDiagnostics(editor.document, range, rangeTokens));
   }
-
-  const diagnostics = buildDiagnostics(editor.document, tokens);
 
   return { tokens, diagnostics };
 }
@@ -136,7 +169,7 @@ function normalizeRanges(ranges: readonly vscode.Range[]): vscode.Range[] {
   const merged: vscode.Range[] = [];
 
   for (const range of sorted) {
-    const previous = merged.at(-1);
+    const previous = merged.length === 0 ? undefined : merged[merged.length - 1];
 
     if (!previous || previous.end.isBefore(range.start)) {
       merged.push(range);
@@ -151,57 +184,102 @@ function normalizeRanges(ranges: readonly vscode.Range[]): vscode.Range[] {
 }
 
 function tokenizeRange(document: vscode.TextDocument, range: vscode.Range): BracketToken[] {
-  const text = document.getText(range);
-  const baseOffset = document.offsetAt(range.start);
+  const scanStart = document.positionAt(Math.max(0, document.offsetAt(range.start) - BYTEVECTOR_PREFIX.length));
+  const scanRange = new vscode.Range(scanStart, range.end);
+  const text = document.getText(scanRange);
+  const baseOffset = document.offsetAt(scanRange.start);
+  const visibleStartOffset = document.offsetAt(range.start);
+  const visibleEndOffset = document.offsetAt(range.end);
   const tokens: BracketToken[] = [];
 
   for (let index = 0; index < text.length; index += 1) {
+    const escapeLength = getEscapedSequenceLength(text, index);
+    if (escapeLength > 0) {
+      index += escapeLength - 1;
+      continue;
+    }
+
+    const vectorLength = getVectorPrefixLength(text, index);
+    if (vectorLength > 0) {
+      const token = {
+        offset: baseOffset + index,
+        length: vectorLength,
+        kind: "open",
+        type: "vector"
+      } satisfies BracketToken;
+
+      if (intersectsVisibleRange(token, visibleStartOffset, visibleEndOffset)) {
+        tokens.push(token);
+      }
+      index += vectorLength - 1;
+      continue;
+    }
+
     const char = text[index];
-
     if (char === OPEN_PAREN) {
-      if (isEscapedParen(text, index)) {
-        continue;
-      }
-
-      if (text[index - 1] === VECTOR_PREFIX) {
-        tokens.push({
-          offset: baseOffset + index - 1,
-          length: 2,
-          kind: "open",
-          type: "vector"
-        });
-        continue;
-      }
-
-      tokens.push({
+      const token = {
         offset: baseOffset + index,
         length: 1,
         kind: "open",
         type: "list"
-      });
+      } satisfies BracketToken;
+
+      if (intersectsVisibleRange(token, visibleStartOffset, visibleEndOffset)) {
+        tokens.push(token);
+      }
       continue;
     }
 
-    if (char === CLOSE_PAREN && !isEscapedParen(text, index)) {
-      tokens.push({
+    if (char === CLOSE_PAREN) {
+      const token = {
         offset: baseOffset + index,
         length: 1,
         kind: "close",
         type: "list"
-      });
+      } satisfies BracketToken;
+
+      if (intersectsVisibleRange(token, visibleStartOffset, visibleEndOffset)) {
+        tokens.push(token);
+      }
     }
   }
 
   return tokens;
 }
 
-function isEscapedParen(text: string, index: number): boolean {
-  return text[index - 1] === VECTOR_PREFIX && text[index - 2] === ESCAPE_PREFIX;
+function getEscapedSequenceLength(text: string, index: number): number {
+  return text.startsWith(`${ESCAPE_PREFIX}${VECTOR_PREFIX}`, index) || text.startsWith(`${ESCAPE_PREFIX}#)`, index)
+    ? 3
+    : 0;
 }
 
-function buildDiagnostics(document: vscode.TextDocument, tokens: readonly BracketToken[]): vscode.Diagnostic[] {
+function getVectorPrefixLength(text: string, index: number): number {
+  if (text.startsWith(BYTEVECTOR_PREFIX, index)) {
+    return BYTEVECTOR_PREFIX.length;
+  }
+
+  if (text.startsWith(VECTOR_PREFIX, index)) {
+    return VECTOR_PREFIX.length;
+  }
+
+  return 0;
+}
+
+function intersectsVisibleRange(token: BracketToken, startOffset: number, endOffset: number): boolean {
+  return token.offset < endOffset && token.offset + token.length > startOffset;
+}
+
+function buildDiagnostics(
+  document: vscode.TextDocument,
+  visibleRange: vscode.Range,
+  tokens: readonly BracketToken[]
+): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
   const stack: BracketToken[] = [];
+  const visibleStartOffset = document.offsetAt(visibleRange.start);
+  const visibleEndOffset = document.offsetAt(visibleRange.end);
+  const canConfirmLeadingMismatch = visibleStartOffset === 0;
+  const canConfirmTrailingMismatch = visibleEndOffset === document.getText().length;
 
   for (const token of tokens) {
     if (token.kind === "open") {
@@ -211,12 +289,16 @@ function buildDiagnostics(document: vscode.TextDocument, tokens: readonly Bracke
 
     const openToken = stack.pop();
     if (!openToken) {
-      diagnostics.push(createDiagnostic(document, token, "Unmatched closing parenthesis"));
+      if (canConfirmLeadingMismatch) {
+        diagnostics.push(createDiagnostic(document, token, "Unmatched closing parenthesis"));
+      }
     }
   }
 
-  for (const token of stack) {
-    diagnostics.push(createDiagnostic(document, token, token.type === "vector" ? "Unmatched vector opener #(" : "Unmatched opening parenthesis"));
+  if (canConfirmTrailingMismatch) {
+    for (const token of stack) {
+      diagnostics.push(createDiagnostic(document, token, token.type === "vector" ? "Unmatched vector opener #(" : "Unmatched opening parenthesis"));
+    }
   }
 
   return diagnostics;
@@ -298,4 +380,16 @@ function toTokenRange(document: vscode.TextDocument, token: BracketToken): vscod
   const end = document.positionAt(token.offset + token.length);
 
   return new vscode.Range(start, end);
+}
+
+function isDiagnosticsEnabled(): boolean {
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>("enableDiagnostics", true);
+}
+
+function getDebounceDelay(): number {
+  const configuredDelay = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>("debounceMs", DEFAULT_DEBOUNCE_MS);
+
+  return typeof configuredDelay === "number" && configuredDelay >= 0
+    ? configuredDelay
+    : DEFAULT_DEBOUNCE_MS;
 }

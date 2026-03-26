@@ -17,6 +17,22 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Lisp Bracket Matcher",
+      "properties": {
+        "lispBracketMatcher.enableDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable diagnostics for unbalanced parentheses in supported Lisp documents."
+        },
+        "lispBracketMatcher.debounceMs": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "description": "Delay in milliseconds before rescanning after document changes."
+        }
+      }
+    },
     "configurationDefaults": {
       "[scheme]": {
         "editor.matchBrackets": "never"
