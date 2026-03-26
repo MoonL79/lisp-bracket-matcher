@@ -30,8 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
     borderRadius: "3px",
     backgroundColor: new vscode.ThemeColor("editorBracketMatch.background"),
     border: "1px solid",
-    borderColor: new vscode.ThemeColor("editorBracketMatch.border"),
-    color: new vscode.ThemeColor("editorBracketMatch.foreground")
+    borderColor: new vscode.ThemeColor("editorBracketMatch.border")
   });
   diagnosticCollection = vscode.languages.createDiagnosticCollection("lisp-bracket-matcher");
 
