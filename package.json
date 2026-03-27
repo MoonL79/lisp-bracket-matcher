@@ -35,13 +35,16 @@
     },
     "configurationDefaults": {
       "[scheme]": {
-        "editor.matchBrackets": "never"
+        "editor.matchBrackets": false,
+        "editor.bracketPairColorization.enabled": false
       },
       "[racket]": {
-        "editor.matchBrackets": "never"
+        "editor.matchBrackets": false,
+        "editor.bracketPairColorization.enabled": false
       },
       "[lisp]": {
-        "editor.matchBrackets": "never"
+        "editor.matchBrackets": false,
+        "editor.bracketPairColorization.enabled": false
       }
     }
   },

@@ -9,10 +9,11 @@ const ESCAPE_PREFIX = "\\";
 const CONFIG_SECTION = "lispBracketMatcher";
 const DEFAULT_DEBOUNCE_MS = 120;
 
-// Fallback colors for cross-platform compatibility
+// Bracket match colors - using high-contrast colors for better visibility
+// These colors are similar to VS Code's default bracket match colors
 const FALLBACK_COLORS = {
-  background: "rgba(128, 128, 128, 0.2)",
-  border: "rgba(128, 128, 128, 0.5)"
+  background: "rgba(128, 128, 128, 0.3)",
+  border: "rgba(192, 192, 192, 0.8)"
 };
 
 type BracketKind = "open" | "close";
@@ -36,24 +37,16 @@ export function activate(context: vscode.ExtensionContext): void {
   console.log("[Lisp Bracket Matcher] Supported languages:", Array.from(SUPPORTED_LANGUAGES));
 
   try {
-    // Create decoration type with fallback colors for cross-platform compatibility
-    const backgroundColor = new vscode.ThemeColor("editorBracketMatch.background");
-    const borderColor = new vscode.ThemeColor("editorBracketMatch.border");
-
+    // Create decoration type with explicit colors for better visibility
+    // Using rgba colors directly instead of ThemeColor to avoid theme compatibility issues
     bracketDecoration = vscode.window.createTextEditorDecorationType({
       borderRadius: "3px",
-      backgroundColor: backgroundColor,
-      border: "1px solid",
-      borderColor: borderColor,
-      // Fallback colors using light/dark theme detection
-      light: {
-        backgroundColor: FALLBACK_COLORS.background,
-        borderColor: FALLBACK_COLORS.border
-      },
-      dark: {
-        backgroundColor: FALLBACK_COLORS.background,
-        borderColor: FALLBACK_COLORS.border
-      }
+      backgroundColor: FALLBACK_COLORS.background,
+      borderWidth: "1px",
+      borderStyle: "solid",
+      borderColor: FALLBACK_COLORS.border,
+      overviewRulerColor: FALLBACK_COLORS.border,
+      overviewRulerLane: vscode.OverviewRulerLane.Center
     });
 
     diagnosticCollection = vscode.languages.createDiagnosticCollection("lisp-bracket-matcher");
@@ -166,16 +159,24 @@ function updateEditorState(editor: vscode.TextEditor | undefined): void {
 
   const selection = editor.selection;
   if (!selection.isEmpty) {
+    console.log(`[Lisp Bracket Matcher] Selection not empty, clearing decorations`);
     editor.setDecorations(bracketDecoration, []);
     lastDecoratedEditor = editor;
     return;
   }
 
   const activeOffset = editor.document.offsetAt(selection.active);
+  console.log(`[Lisp Bracket Matcher] Active offset: ${activeOffset}`);
+  console.log(`[Lisp Bracket Matcher] Total tokens from visible ranges: ${visibleContext.tokens.length}`);
+
   const token = findBracketAtCursor(visibleContext.tokens, activeOffset);
+  console.log(`[Lisp Bracket Matcher] Token found:`, token ? JSON.stringify(token) : 'undefined');
+
   const match = token === undefined ? undefined : findMatchingBracket(visibleContext.tokens, token);
+  console.log(`[Lisp Bracket Matcher] Match found:`, match ? JSON.stringify(match) : 'undefined');
 
   if (!token || !match) {
+    console.log(`[Lisp Bracket Matcher] No token or match, clearing decorations. token=${!!token}, match=${!!match}`);
     editor.setDecorations(bracketDecoration, []);
     lastDecoratedEditor = editor;
     return;
@@ -228,13 +229,21 @@ function normalizeRanges(ranges: readonly vscode.Range[]): vscode.Range[] {
 }
 
 function tokenizeRange(document: vscode.TextDocument, range: vscode.Range): BracketToken[] {
-  const scanStart = document.positionAt(Math.max(0, document.offsetAt(range.start) - BYTEVECTOR_PREFIX.length));
+  const rangeStartOffset = document.offsetAt(range.start);
+  const rangeEndOffset = document.offsetAt(range.end);
+  const scanStartOffset = Math.max(0, rangeStartOffset - BYTEVECTOR_PREFIX.length);
+  const scanStart = document.positionAt(scanStartOffset);
   const scanRange = new vscode.Range(scanStart, range.end);
   const text = document.getText(scanRange);
   const baseOffset = document.offsetAt(scanRange.start);
-  const visibleStartOffset = document.offsetAt(range.start);
-  const visibleEndOffset = document.offsetAt(range.end);
+  const visibleStartOffset = rangeStartOffset;
+  const visibleEndOffset = rangeEndOffset;
   const tokens: BracketToken[] = [];
+
+  console.log(`[Lisp Bracket Matcher] tokenizeRange: rangeStartOffset=${rangeStartOffset}, rangeEndOffset=${rangeEndOffset}`);
+  console.log(`[Lisp Bracket Matcher] tokenizeRange: scanStartOffset=${scanStartOffset}, baseOffset=${baseOffset}`);
+  console.log(`[Lisp Bracket Matcher] tokenizeRange: visibleStartOffset=${visibleStartOffset}, visibleEndOffset=${visibleEndOffset}`);
+  console.log(`[Lisp Bracket Matcher] tokenizeRange: text length=${text.length}`);
 
   for (let index = 0; index < text.length; index += 1) {
     const escapeLength = getEscapedSequenceLength(text, index);
@@ -310,7 +319,9 @@ function getVectorPrefixLength(text: string, index: number): number {
 }
 
 function intersectsVisibleRange(token: BracketToken, startOffset: number, endOffset: number): boolean {
-  return token.offset < endOffset && token.offset + token.length > startOffset;
+  const result = token.offset < endOffset && token.offset + token.length > startOffset;
+  // console.log(`[Lisp Bracket Matcher] intersectsVisibleRange: token.offset=${token.offset}, token.length=${token.length}, startOffset=${startOffset}, endOffset=${endOffset}, result=${result}`);
+  return result;
 }
 
 function buildDiagnostics(
@@ -361,6 +372,9 @@ function createDiagnostic(
 }
 
 function findBracketAtCursor(tokens: readonly BracketToken[], activeOffset: number): BracketToken | undefined {
+  console.log(`[Lisp Bracket Matcher] findBracketAtCursor: activeOffset=${activeOffset}, tokens count=${tokens.length}`);
+  console.log(`[Lisp Bracket Matcher] Tokens:`, JSON.stringify(tokens));
+
   const offsetsToCheck = [activeOffset, activeOffset - 1];
 
   for (const offset of offsetsToCheck) {
@@ -369,6 +383,7 @@ function findBracketAtCursor(tokens: readonly BracketToken[], activeOffset: numb
     }
 
     const token = tokens.find((candidate) => offset >= candidate.offset && offset < candidate.offset + candidate.length);
+    console.log(`[Lisp Bracket Matcher] Checking offset=${offset}, found token:`, token ? JSON.stringify(token) : 'undefined');
     if (token) {
       return token;
     }
@@ -378,15 +393,35 @@ function findBracketAtCursor(tokens: readonly BracketToken[], activeOffset: numb
 }
 
 function findMatchingBracket(tokens: readonly BracketToken[], token: BracketToken): BracketToken | undefined {
+  console.log(`[Lisp Bracket Matcher] findMatchingBracket: looking for token=`, JSON.stringify(token));
+  console.log(`[Lisp Bracket Matcher] tokens count=${tokens.length}, tokens=`, JSON.stringify(tokens));
+
   const tokenIndex = tokens.findIndex((candidate) => candidate.offset === token.offset && candidate.kind === token.kind);
 
+  console.log(`[Lisp Bracket Matcher] tokenIndex=${tokenIndex}`);
+
   if (tokenIndex < 0) {
+    console.log(`[Lisp Bracket Matcher] Token not found in tokens array! Trying direct search...`);
+    // Even if token is not in the array (e.g., at edge of visible range), try to find match
+    // by searching for a token with matching offset and kind
+    const directMatch = tokens.find((candidate) => candidate.offset === token.offset && candidate.kind === token.kind);
+    if (directMatch) {
+      const foundIndex = tokens.indexOf(directMatch);
+      console.log(`[Lisp Bracket Matcher] Found direct match at index=${foundIndex}`);
+      return token.kind === "open"
+        ? scanForward(tokens, foundIndex + 1)
+        : scanBackward(tokens, foundIndex - 1);
+    }
+    console.log(`[Lisp Bracket Matcher] No direct match found, returning undefined`);
     return undefined;
   }
 
-  return token.kind === "open"
+  const result = token.kind === "open"
     ? scanForward(tokens, tokenIndex + 1)
     : scanBackward(tokens, tokenIndex - 1);
+
+  console.log(`[Lisp Bracket Matcher] Matching result:`, result ? JSON.stringify(result) : 'undefined');
+  return result;
 }
 
 function scanForward(tokens: readonly BracketToken[], startIndex: number): BracketToken | undefined {
