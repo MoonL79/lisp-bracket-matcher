@@ -2,7 +2,7 @@
   "name": "lisp-bracket-matcher",
   "displayName": "Lisp Bracket Matcher",
   "description": "Custom bracket matching for Lisp/Scheme files that ignores character literals like #\\( and #\\).",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
