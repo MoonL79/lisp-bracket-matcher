@@ -9,6 +9,12 @@ const ESCAPE_PREFIX = "\\";
 const CONFIG_SECTION = "lispBracketMatcher";
 const DEFAULT_DEBOUNCE_MS = 120;
 
+// Fallback colors for cross-platform compatibility
+const FALLBACK_COLORS = {
+  background: "rgba(128, 128, 128, 0.2)",
+  border: "rgba(128, 128, 128, 0.5)"
+};
+
 type BracketKind = "open" | "close";
 type BracketTokenType = "list" | "vector";
 
@@ -26,44 +32,68 @@ let pendingUpdate: ReturnType<typeof setTimeout> | undefined;
 let pendingEditor: vscode.TextEditor | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  bracketDecoration = vscode.window.createTextEditorDecorationType({
-    borderRadius: "3px",
-    backgroundColor: new vscode.ThemeColor("editorBracketMatch.background"),
-    border: "1px solid",
-    borderColor: new vscode.ThemeColor("editorBracketMatch.border")
-  });
-  diagnosticCollection = vscode.languages.createDiagnosticCollection("lisp-bracket-matcher");
+  console.log("[Lisp Bracket Matcher] Activating extension...");
+  console.log("[Lisp Bracket Matcher] Supported languages:", Array.from(SUPPORTED_LANGUAGES));
 
-  context.subscriptions.push(bracketDecoration, diagnosticCollection);
+  try {
+    // Create decoration type with fallback colors for cross-platform compatibility
+    const backgroundColor = new vscode.ThemeColor("editorBracketMatch.background");
+    const borderColor = new vscode.ThemeColor("editorBracketMatch.border");
 
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      scheduleEditorUpdate(editor, 0);
-    }),
-    vscode.window.onDidChangeTextEditorSelection((event) => {
-      scheduleEditorUpdate(event.textEditor, 0);
-    }),
-    vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-      scheduleEditorUpdate(event.textEditor, 0);
-    }),
-    vscode.workspace.onDidChangeTextDocument((event) => {
-      const editor = vscode.window.activeTextEditor;
-
-      if (editor && event.document === editor.document) {
-        scheduleEditorUpdate(editor);
+    bracketDecoration = vscode.window.createTextEditorDecorationType({
+      borderRadius: "3px",
+      backgroundColor: backgroundColor,
+      border: "1px solid",
+      borderColor: borderColor,
+      // Fallback colors using light/dark theme detection
+      light: {
+        backgroundColor: FALLBACK_COLORS.background,
+        borderColor: FALLBACK_COLORS.border
+      },
+      dark: {
+        backgroundColor: FALLBACK_COLORS.background,
+        borderColor: FALLBACK_COLORS.border
       }
-    }),
-    vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration(CONFIG_SECTION)) {
-        scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
-      }
-    }),
-    vscode.workspace.onDidCloseTextDocument((document) => {
-      diagnosticCollection?.delete(document.uri);
-    })
-  );
+    });
 
-  scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
+    diagnosticCollection = vscode.languages.createDiagnosticCollection("lisp-bracket-matcher");
+
+    context.subscriptions.push(bracketDecoration, diagnosticCollection);
+
+    context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        console.log("[Lisp Bracket Matcher] Active editor changed:", editor?.document.languageId);
+        scheduleEditorUpdate(editor, 0);
+      }),
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        scheduleEditorUpdate(event.textEditor, 0);
+      }),
+      vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+        scheduleEditorUpdate(event.textEditor, 0);
+      }),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        const editor = vscode.window.activeTextEditor;
+
+        if (editor && event.document === editor.document) {
+          scheduleEditorUpdate(editor);
+        }
+      }),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration(CONFIG_SECTION)) {
+          scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
+        }
+      }),
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        diagnosticCollection?.delete(document.uri);
+      })
+    );
+
+    console.log("[Lisp Bracket Matcher] Extension activated successfully");
+    scheduleEditorUpdate(vscode.window.activeTextEditor, 0);
+  } catch (error) {
+    console.error("[Lisp Bracket Matcher] Activation failed:", error);
+    throw error;
+  }
 }
 
 export function deactivate(): void {
@@ -101,13 +131,28 @@ function updateEditorState(editor: vscode.TextEditor | undefined): void {
     lastDecoratedEditor.setDecorations(bracketDecoration, []);
   }
 
-  if (!editor || !bracketDecoration || !diagnosticCollection || !SUPPORTED_LANGUAGES.has(editor.document.languageId)) {
-    if (editor && bracketDecoration) {
+  if (!editor) {
+    console.log("[Lisp Bracket Matcher] No active editor");
+    lastDecoratedEditor = editor;
+    return;
+  }
+
+  // Debug: Log language ID check
+  const languageId = editor.document.languageId;
+  console.log(`[Lisp Bracket Matcher] Checking language ID: "${languageId}"`);
+  console.log(`[Lisp Bracket Matcher] Supported: ${SUPPORTED_LANGUAGES.has(languageId)}`);
+
+  if (!bracketDecoration || !diagnosticCollection || !SUPPORTED_LANGUAGES.has(languageId)) {
+    if (bracketDecoration) {
       editor.setDecorations(bracketDecoration, []);
     }
-    if (editor) {
-      diagnosticCollection?.delete(editor.document.uri);
+    diagnosticCollection?.delete(editor.document.uri);
+
+    // Provide clear feedback when language is not supported
+    if (!SUPPORTED_LANGUAGES.has(languageId)) {
+      console.log(`[Lisp Bracket Matcher] Language "${languageId}" not supported. Supported: ${Array.from(SUPPORTED_LANGUAGES).join(", ")}`);
     }
+
     lastDecoratedEditor = editor;
     return;
   }
