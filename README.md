@@ -2,7 +2,7 @@
 
 `Lisp Bracket Matcher` is a Visual Studio Code extension for Lisp-family languages that fixes bracket matching in cases where the default matcher is not precise enough.
 
-It is designed specifically to solve escaped bracket matching issues such as `\#(` and `\#)`, while still correctly recognizing real Lisp forms like `(`, `#(`, and `#vu8(`. This makes editing Scheme, Racket, and Lisp code more reliable when your source contains vectors, bytevectors, or escaped reader syntax.
+It is designed specifically to handle character literals like `#\(` and `#\)`, while still correctly recognizing real Lisp forms like `(`, `#(`, and `#vu8(`. This makes editing Scheme, Racket, and Lisp code more reliable when your source contains vectors, bytevectors, or character literals.
 
 ## Why This Extension
 
@@ -12,17 +12,17 @@ Examples:
 
 - `#(` is a real vector opener and should be matched.
 - `#vu8(` is a real bytevector opener and should be matched.
-- `\#(` is an escaped sequence and should be ignored.
-- `\#)` is an escaped sequence and should also be ignored.
+- `#\(` is a character literal and should be ignored.
+- `#\)` is a character literal and should also be ignored.
 
-Default bracket matching can treat these cases too simplistically. This extension adds Lisp-aware matching behavior so the editor highlights the correct pair and avoids false positives caused by escaped syntax.
+Default bracket matching can treat these cases too simplistically. This extension adds Lisp-aware matching behavior so the editor highlights the correct pair and avoids false positives caused by character literals.
 
 ## Features
 
 - Correctly matches standard list parentheses: `(` ... `)`
 - Supports vector forms: `#(`
 - Supports bytevector forms: `#vu8(`
-- Ignores escaped sequences such as `\#(` and `\#)`
+- Ignores character literals such as `#\(` and `#\)`
 - Highlights matching brackets in supported files
 - Provides optional diagnostics for unmatched parentheses and vector openers
 - Works with `scheme`, `racket`, and `lisp` language modes
@@ -65,14 +65,14 @@ Placing the cursor on either `(` or `)` highlights the correct matching pair.
 
 The extension treats `#(` and `#vu8(` as valid opening bracket tokens and matches them against their closing `)`.
 
-### Example 3: Escaped sequences are ignored
+### Example 3: Character literals are ignored
 
 ```scheme
-(display "\\#(")
-(display "\\#)")
+(define left-paren #\()
+(define right-paren #\))
 ```
 
-The sequences `\#(` and `\#)` are ignored by the matcher, so they do not interfere with structural navigation or bracket highlighting.
+The character literals `#\(` and `#\)` are ignored by the matcher, so they do not interfere with structural navigation or bracket highlighting.
 
 ## Configuration
 
@@ -105,12 +105,12 @@ Controls the delay, in milliseconds, before the document is rescanned after edit
 
 `Lisp Bracket Matcher` and rainbow bracket plugins solve different problems and can be used together.
 
-- Use `Lisp Bracket Matcher` for correct structural matching of `(`, `#(`, and `#vu8(`, while ignoring escaped sequences like `\#(`.
+- Use `Lisp Bracket Matcher` for correct structural matching of `(`, `#(`, and `#vu8(`, while ignoring character literals like `#\(`.
 - Use a rainbow bracket extension for visual depth coloring of nested parentheses.
 
 Recommended setup:
 
-- Keep this extension enabled for accurate Lisp-aware matching.
+- Keep this extension enabled for accurate Lisp-aware matching that understands character literals.
 - Use your preferred rainbow bracket extension for nested color visualization.
 - Let this extension handle bracket matching behavior in supported Lisp files.
 

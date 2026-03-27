@@ -1,7 +1,7 @@
 {
   "name": "lisp-bracket-matcher",
   "displayName": "Lisp Bracket Matcher",
-  "description": "Custom bracket matching for Lisp/Scheme files that ignores escaped \\#( and \\#).",
+  "description": "Custom bracket matching for Lisp/Scheme files that ignores character literals like #\\( and #\\).",
   "version": "0.0.1",
   "publisher": "local",
   "engines": {

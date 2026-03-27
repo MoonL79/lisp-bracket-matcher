@@ -41,7 +41,6 @@ const OPEN_PAREN = "(";
 const CLOSE_PAREN = ")";
 const VECTOR_PREFIX = "#(";
 const BYTEVECTOR_PREFIX = "#vu8(";
-const ESCAPE_PREFIX = "\\";
 const CONFIG_SECTION = "lispBracketMatcher";
 const DEFAULT_DEBOUNCE_MS = 120;
 // Bracket match colors - using high-contrast colors for better visibility
@@ -165,9 +164,13 @@ function updateEditorState(editor) {
     const activeOffset = editor.document.offsetAt(selection.active);
     console.log(`[Lisp Bracket Matcher] Active offset: ${activeOffset}`);
     console.log(`[Lisp Bracket Matcher] Total tokens from visible ranges: ${visibleContext.tokens.length}`);
-    const token = findBracketAtCursor(visibleContext.tokens, activeOffset);
+    // Always use full document tokens for bracket matching to avoid issues when scrolling
+    const fullDocRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
+    const allTokens = tokenizeRange(editor.document, fullDocRange);
+    console.log(`[Lisp Bracket Matcher] Total tokens in document: ${allTokens.length}`);
+    const token = findBracketAtCursor(allTokens, activeOffset);
     console.log(`[Lisp Bracket Matcher] Token found:`, token ? JSON.stringify(token) : 'undefined');
-    const match = token === undefined ? undefined : findMatchingBracket(visibleContext.tokens, token);
+    const match = token === undefined ? undefined : findMatchingBracket(allTokens, token);
     console.log(`[Lisp Bracket Matcher] Match found:`, match ? JSON.stringify(match) : 'undefined');
     if (!token || !match) {
         console.log(`[Lisp Bracket Matcher] No token or match, clearing decorations. token=${!!token}, match=${!!match}`);
@@ -271,9 +274,42 @@ function tokenizeRange(document, range) {
     return tokens;
 }
 function getEscapedSequenceLength(text, index) {
-    return text.startsWith(`${ESCAPE_PREFIX}${VECTOR_PREFIX}`, index) || text.startsWith(`${ESCAPE_PREFIX}#)`, index)
-        ? 3
-        : 0;
+    // Handle character literals: #\( and #\) and #\space, #\newline, etc.
+    // Character literal syntax is #\X where X can be any character or named character
+    if (text.startsWith('#\\', index)) {
+        // We're at the start of a character literal
+        // Character literal is at minimum #\X (3 characters)
+        if (index + 2 < text.length) {
+            const charAfterBackslash = text[index + 2];
+            // Check if it's a single-character literal like #\( or #\)
+            // These are always 3 characters: #, \, and the character
+            if (charAfterBackslash === '(' || charAfterBackslash === ')' ||
+                charAfterBackslash === '[' || charAfterBackslash === ']' ||
+                charAfterBackslash === '{' || charAfterBackslash === '}' ||
+                charAfterBackslash === '"' || charAfterBackslash === ';' ||
+                charAfterBackslash === ' ' || charAfterBackslash === '\t' ||
+                charAfterBackslash === '\n' || charAfterBackslash === '\r' ||
+                charAfterBackslash === '\\') {
+                return 3; // #\X where X is a special character
+            }
+            // Otherwise, it might be a named character like #\space or #\newline
+            // Consume until we hit a delimiter
+            let len = 3; // Start with #\X (at least one character after \)
+            while (index + len < text.length) {
+                const ch = text[index + len];
+                if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' ||
+                    ch === '(' || ch === ')' || ch === '[' || ch === ']' ||
+                    ch === '{' || ch === '}' || ch === '"' || ch === ';') {
+                    break;
+                }
+                len++;
+            }
+            return len;
+        }
+        // Edge case: #\ at end of text
+        return 2;
+    }
+    return 0;
 }
 function getVectorPrefixLength(text, index) {
     if (text.startsWith(BYTEVECTOR_PREFIX, index)) {
